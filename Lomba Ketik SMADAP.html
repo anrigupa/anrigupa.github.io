@@ -1,0 +1,1034 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Type Racer - Supabase Multiplayer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Memuat Supabase JS SDK v2 dari CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono:wght@400;700&display=swap');
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0f172a; /* slate-900 */
+            color: #f8fafc;
+            overflow-x: hidden;
+        }
+
+        .font-mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .track-lane {
+            background-image: repeating-linear-gradient(90deg, transparent, transparent 40px, rgba(255, 255, 255, 0.1) 40px, rgba(255, 255, 255, 0.1) 80px);
+            border-bottom: 2px dashed #334155;
+            position: relative;
+        }
+
+        .finish-line {
+            position: absolute;
+            right: 40px; 
+            top: 0;
+            bottom: 0;
+            width: 20px;
+            background-image: repeating-conic-gradient(#fff 0% 25%, #000 0% 50%);
+            background-position: 0 0, 10px 10px;
+            background-size: 20px 20px;
+            z-index: 10;
+        }
+
+        .car-container {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            left: 0%;
+            transition: left 0.2s linear; 
+            z-index: 20;
+            width: 60px;
+            display: flex;
+            align-items: center;
+        }
+
+        .car-name-tag {
+            position: absolute;
+            top: -20px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 0.65rem;
+            background: rgba(0,0,0,0.8);
+            padding: 2px 6px;
+            border-radius: 4px;
+            white-space: nowrap;
+            color: #94a3b8;
+            font-weight: bold;
+        }
+        
+        .player-tag {
+            color: #fbbf24;
+        }
+
+        .typing-area {
+            font-size: 1.5rem;
+            line-height: 2rem;
+            letter-spacing: 0.5px;
+        }
+
+        .char {
+            color: #64748b;
+            transition: all 0.1s;
+        }
+
+        .char.correct {
+            color: #22c55e;
+        }
+
+        .char.incorrect {
+            color: #ef4444;
+            background-color: rgba(239, 68, 68, 0.2);
+            border-radius: 2px;
+        }
+
+        .char.active {
+            color: #f8fafc;
+            text-decoration: underline;
+            text-decoration-color: #3b82f6;
+            text-decoration-thickness: 3px;
+        }
+
+        @keyframes pulse-glow {
+            0%, 100% { box-shadow: 0 0 15px rgba(59, 130, 246, 0.5); border-color: #3b82f6; }
+            50% { box-shadow: 0 0 25px rgba(59, 130, 246, 0.8); border-color: #60a5fa; }
+        }
+
+        .selected-car {
+            background-color: rgba(59, 130, 246, 0.1);
+            animation: pulse-glow 2s infinite;
+        }
+
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.8);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .spinner {
+            border: 3px solid rgba(255,255,255,0.1);
+            border-radius: 50%;
+            border-top: 3px solid #3b82f6;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        summary { list-style: none; }
+        summary::-webkit-details-marker { display: none; }
+        details[open] summary { color: #e2e8f0; }
+        @media (max-width: 640px) { .typing-area { font-size: 1.15rem; line-height: 1.75rem; } }
+        @media (prefers-reduced-motion: reduce) { .selected-car { animation: none; } }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <!-- Header -->
+    <header class="border-b border-slate-800 px-4 py-3 z-50 shadow-lg">
+        <div class="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-1 sm:gap-4">
+            <h1 class="text-xl sm:text-2xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-emerald-400">
+                🏎️ NITRO TYPE
+            </h1>
+            <p class="text-slate-400 text-xs sm:text-sm flex items-center gap-2">
+                <span id="connection-dot" class="w-2 h-2 rounded-full bg-slate-500"></span>
+                <span id="connection-status">Memeriksa koneksi Supabase...</span>
+            </p>
+        </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <main class="flex-grow flex items-start sm:items-center justify-center p-4 sm:p-6 w-full max-w-6xl mx-auto">
+        
+        <!-- MENU SCREEN -->
+        <div id="menu-screen" class="glass-panel p-5 sm:p-8 rounded-2xl w-full max-w-3xl shadow-2xl">
+            <h2 class="text-2xl font-bold mb-6 text-center text-white">Garasi Persiapan</h2>
+            
+            <section class="mb-6">
+                <label for="player-name-input" class="text-slate-300 mb-2 block font-semibold">Nama Pemain</label>
+                <input type="text" id="player-name-input" maxlength="20" placeholder="Ketik nama kamu..." class="w-full bg-slate-800 border-2 border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500 font-bold" value="PembalapSMADAP">
+                <details class="mt-3">
+                    <summary class="text-xs text-slate-400 cursor-pointer hover:text-slate-200 select-none">Pengaturan Supabase</summary>
+                    <div class="mt-2 bg-slate-900/60 p-3 rounded-lg border border-slate-700">
+                        <label for="supabase-url-input" class="text-xs text-slate-400 mb-1 block">Project URL</label>
+                        <input type="text" id="supabase-url-input" placeholder="https://xxxx.supabase.co" class="w-full bg-slate-800 border border-slate-700 rounded p-2 text-sm text-white focus:outline-none focus:border-blue-500 font-mono" value="https://ojcadhgmmouudhffwbha.supabase.co">
+                    </div>
+                </details>
+            </section>
+
+            <div class="mb-8">
+                <label class="text-slate-300 mb-2 block font-semibold">Pilih Mobil</label>
+                <div class="grid grid-cols-3 gap-2 sm:gap-4">
+                    <div class="car-option cursor-pointer border-2 border-slate-700 rounded-xl p-2 sm:p-4 flex flex-col items-center hover:border-slate-500 transition-colors" data-car="car1" onclick="window.selectCar('car1', this)">
+                        <svg viewBox="0 0 100 40" class="mb-2 w-full max-w-[80px] h-auto">
+                            <path d="M10 30 L10 20 L25 10 L65 10 L80 20 L95 20 L95 30 Z" fill="#ef4444" stroke="#7f1d1d" stroke-width="2"/>
+                            <circle cx="25" cy="30" r="7" fill="#1e293b" stroke="#94a3b8" stroke-width="2"/>
+                            <circle cx="75" cy="30" r="7" fill="#1e293b" stroke="#94a3b8" stroke-width="2"/>
+                            <path d="M30 12 L60 12 L70 20 L25 20 Z" fill="#93c5fd" opacity="0.8"/>
+                        </svg>
+                        <span class="text-sm sm:text-base font-bold text-red-400">Red Flare</span>
+                    </div>
+                    
+                    <div class="car-option selected-car cursor-pointer border-2 border-slate-700 rounded-xl p-2 sm:p-4 flex flex-col items-center hover:border-slate-500 transition-colors" data-car="car2" onclick="window.selectCar('car2', this)">
+                        <svg viewBox="0 0 100 40" class="mb-2 w-full max-w-[80px] h-auto">
+                            <path d="M5 25 L15 15 L40 5 L70 15 L95 25 L95 30 L5 30 Z" fill="#3b82f6" stroke="#1e3a8a" stroke-width="2"/>
+                            <circle cx="20" cy="30" r="7" fill="#1e293b" stroke="#94a3b8" stroke-width="2"/>
+                            <circle cx="80" cy="30" r="7" fill="#1e293b" stroke="#94a3b8" stroke-width="2"/>
+                            <path d="M40 8 L65 15 L18 15 Z" fill="#93c5fd" opacity="0.8"/>
+                            <rect x="85" y="20" width="15" height="4" fill="#fbbf24"/>
+                        </svg>
+                        <span class="text-sm sm:text-base font-bold text-blue-400">Blue Bullet</span>
+                    </div>
+
+                    <div class="car-option cursor-pointer border-2 border-slate-700 rounded-xl p-2 sm:p-4 flex flex-col items-center hover:border-slate-500 transition-colors" data-car="car3" onclick="window.selectCar('car3', this)">
+                        <svg viewBox="0 0 100 40" class="mb-2 w-full max-w-[80px] h-auto">
+                            <rect x="10" y="15" width="85" height="15" rx="3" fill="#22c55e" stroke="#14532d" stroke-width="2"/>
+                            <path d="M20 15 L30 5 L60 5 L70 15 Z" fill="#22c55e" stroke="#14532d" stroke-width="2"/>
+                            <circle cx="25" cy="30" r="8" fill="#1e293b" stroke="#94a3b8" stroke-width="2"/>
+                            <circle cx="75" cy="30" r="8" fill="#1e293b" stroke="#94a3b8" stroke-width="2"/>
+                            <path d="M33 7 L57 7 L65 15 L25 15 Z" fill="#93c5fd" opacity="0.8"/>
+                        </svg>
+                        <span class="text-sm sm:text-base font-bold text-green-400">Green Titan</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Single Player -->
+                <div class="bg-slate-800/50 p-5 rounded-xl border border-slate-700 flex flex-col">
+                    <h3 class="font-bold text-white mb-2 text-lg">Mode Latihan (Lawan Bot)</h3>
+                    <p class="text-sm text-slate-400 mb-4">Uji kemampuanmu secara offline melawan bot.</p>
+                    <div class="grid grid-cols-2 gap-2 mb-4">
+                        <button id="btn-5p" class="py-2 bg-slate-700 text-white rounded font-bold border border-slate-500" onclick="window.setPlayers(5)">5 Pemain</button>
+                        <button id="btn-10p" class="py-2 bg-slate-800 text-slate-400 rounded font-bold border border-slate-700" onclick="window.setPlayers(10)">10 Pemain</button>
+                    </div>
+                    <button class="w-full mt-auto py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-bold shadow-lg transition" onclick="window.startSinglePlayer()">
+                        Mulai Latihan
+                    </button>
+                </div>
+
+                <!-- Multiplayer Supabase -->
+                <div class="bg-slate-800/50 p-5 rounded-xl border border-blue-900 shadow-[0_0_15px_rgba(59,130,246,0.2)] flex flex-col">
+                    <h3 class="font-bold mb-2 text-lg text-blue-400">Mode Online (Supabase)</h3>
+                    <p class="text-sm text-slate-400 mb-4">Main bersama teman atau tonton balapan secara real-time.</p>
+                    <button class="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-bold shadow-lg transition" onclick="window.createRoom()">
+                        Buat Ruang (Pembalap)
+                    </button>
+                    <div class="flex items-center gap-3 my-3 text-xs text-slate-500">
+                        <span class="h-px flex-1 bg-slate-700"></span>atau gabung ke ruang<span class="h-px flex-1 bg-slate-700"></span>
+                    </div>
+                    <input type="text" id="join-room-code" placeholder="KODE RUANG" class="w-full mb-2 py-2 bg-slate-900 border border-slate-700 rounded-lg px-3 text-white text-center font-mono uppercase focus:border-blue-500 focus:outline-none" maxlength="5">
+                    <div class="grid grid-cols-2 gap-2">
+                        <button class="py-2 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-bold text-sm transition" onclick="window.joinRoom('racer')">Gabung Pembalap</button>
+                        <button class="py-2 px-3 bg-amber-600 hover:bg-amber-500 text-white rounded-lg font-bold text-sm transition" onclick="window.joinRoom('spectator')">👀 Penonton</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- LOBBY SCREEN -->
+        <div id="lobby-screen" class="glass-panel p-8 rounded-2xl w-full max-w-2xl hidden flex-col items-center shadow-2xl">
+            <h2 class="text-3xl font-black text-white mb-2">RUANG TUNGGU</h2>
+            <div class="bg-slate-900 border-2 border-slate-700 rounded-xl px-6 py-3 mb-6 flex flex-col items-center">
+                <span class="text-slate-400 text-sm font-bold uppercase tracking-widest mb-1">Kode Ruangan</span>
+                <span id="lobby-room-code" class="text-4xl font-mono font-black text-emerald-400 tracking-widest">-----</span>
+                <button class="text-xs text-blue-400 hover:text-blue-300 mt-2 underline" onclick="window.copyRoomCode()">Salin Kode</button>
+            </div>
+
+            <div class="w-full bg-slate-800 rounded-xl p-4 mb-6">
+                <h3 class="text-slate-300 font-bold mb-3 border-b border-slate-700 pb-2 flex justify-between">
+                    <span id="lobby-list-title">Pemain Bergabung:</span>
+                    <span id="lobby-player-count" class="text-emerald-400">1</span>
+                </h3>
+                <ul id="lobby-player-list" class="flex flex-col gap-2 max-h-48 overflow-y-auto">
+                    <!-- Injected by JS -->
+                </ul>
+            </div>
+
+            <div class="w-full flex gap-4">
+                <button class="flex-1 py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-xl font-bold transition" onclick="window.leaveLobby()">Kembali</button>
+                <button id="btn-start-multiplayer" class="flex-1 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-xl font-bold shadow-lg transition hidden" onclick="window.startMultiplayerRace()">
+                    MULAI BALAPAN
+                </button>
+                <div id="wait-host-msg" class="flex-1 py-3 text-center text-slate-400 font-bold hidden flex items-center justify-center gap-2">
+                    <div class="spinner"></div> Menunggu Host...
+                </div>
+            </div>
+        </div>
+
+        <!-- RACE SCREEN -->
+        <div id="race-screen" class="w-full hidden flex-col gap-3 sm:gap-4">
+            <div class="glass-panel rounded-xl p-3 sm:p-4 grid grid-cols-3 gap-2 text-center shadow-md">
+                <div class="text-slate-400 text-xs sm:text-sm">Posisi
+                    <div class="text-xl sm:text-2xl font-bold text-white"><span id="player-position">1</span><span class="text-slate-500 text-base"> / <span id="total-racers"></span></span></div>
+                </div>
+                <div class="text-slate-400 text-xs sm:text-sm" id="wpm-stat-box">WPM
+                    <div id="player-wpm" class="text-xl sm:text-2xl font-bold text-emerald-400">0</div>
+                </div>
+                <div class="text-slate-400 text-xs sm:text-sm" id="acc-stat-box">Akurasi
+                    <div id="player-accuracy" class="text-xl sm:text-2xl font-bold text-white">100%</div>
+                </div>
+            </div>
+
+            <div class="glass-panel rounded-xl p-3 sm:p-4 overflow-x-auto shadow-inner">
+                <div id="track-container" class="flex flex-col gap-2 min-w-[420px]">
+                    <!-- Lanes injected by JS -->
+                </div>
+            </div>
+
+            <div class="glass-panel p-4 sm:p-6 rounded-xl relative" id="bottom-control-panel">
+                <div id="countdown-overlay" class="absolute inset-0 bg-slate-900/90 rounded-xl flex flex-col items-center justify-center z-50">
+                    <div id="countdown-number" class="text-6xl sm:text-7xl font-black text-transparent bg-clip-text bg-gradient-to-br from-yellow-300 to-red-500 animate-pulse">3</div>
+                    <p class="text-slate-300 mt-4 text-lg">Bersiaplah mengetik...</p>
+                </div>
+                <div id="text-display" class="typing-area font-mono select-none break-words focus:outline-none" tabindex="0"></div>
+                <div class="mt-4 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 text-sm text-slate-500">
+                    <p id="typing-instruction">Ketik langsung untuk memulai. Jangan gunakan backspace.</p>
+                    <button class="px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-white transition self-end sm:self-auto" onclick="window.quitGame()">Keluar</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- RESULT SCREEN -->
+        <div id="result-screen" class="glass-panel p-5 sm:p-8 rounded-2xl w-full max-w-2xl hidden flex-col items-center shadow-2xl">
+            <div id="trophy-icon" class="text-6xl mb-2">🏆</div>
+            <h2 id="result-title" class="text-2xl sm:text-3xl font-black text-white mb-6 text-center">SELESAI</h2>
+            <div class="grid grid-cols-2 gap-4 w-full mb-6">
+                <div class="bg-slate-800/50 p-5 rounded-xl border border-slate-700 text-center">
+                    <p class="text-slate-400 text-sm font-semibold mb-1">Kecepatan</p>
+                    <p class="text-4xl font-black text-emerald-400"><span id="final-wpm">0</span> <span class="text-base font-bold text-slate-500">WPM</span></p>
+                </div>
+                <div class="bg-slate-800/50 p-5 rounded-xl border border-slate-700 text-center">
+                    <p class="text-slate-400 text-sm font-semibold mb-1">Akurasi</p>
+                    <p id="final-acc" class="text-4xl font-black text-blue-400">0%</p>
+                </div>
+            </div>
+            <div class="w-full bg-slate-800 rounded-xl p-4 mb-6 max-h-64 overflow-y-auto">
+                <h3 class="text-slate-300 font-bold mb-3 border-b border-slate-700 pb-2">Papan Peringkat Akhir</h3>
+                <ul id="leaderboard-list" class="flex flex-col gap-2"></ul>
+            </div>
+            <div class="w-full grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <button class="py-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl font-bold text-lg shadow-lg transition" onclick="window.playAgain()">
+                    MULAI LAGI
+                </button>
+                <button class="py-4 bg-slate-700 hover:bg-slate-600 text-white rounded-xl font-bold text-lg transition" onclick="window.quitGame()">
+                    KEMBALI KE MENU
+                </button>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const SUPABASE_ANON_KEY = "sb_publishable_mmuIWSmeDVqfiBtKicgqYA_G-h4M_QK";
+        let supabaseClient = null;
+
+        const CAR_SVGS = {
+            car1: `<svg width="60" height="30" viewBox="0 0 100 40"><path d="M10 30 L10 20 L25 10 L65 10 L80 20 L95 20 L95 30 Z" fill="#ef4444" stroke="#7f1d1d" stroke-width="2"/><circle cx="25" cy="30" r="7" fill="#1e293b" stroke="#94a3b8" stroke-width="2"/><circle cx="75" cy="30" r="7" fill="#1e293b" stroke="#94a3b8" stroke-width="2"/><path d="M30 12 L60 12 L70 20 L25 20 Z" fill="#93c5fd" opacity="0.8"/></svg>`,
+            car2: `<svg width="60" height="30" viewBox="0 0 100 40"><path d="M5 25 L15 15 L40 5 L70 15 L95 25 L95 30 L5 30 Z" fill="#3b82f6" stroke="#1e3a8a" stroke-width="2"/><circle cx="20" cy="30" r="7" fill="#1e293b" stroke="#94a3b8" stroke-width="2"/><circle cx="80" cy="30" r="7" fill="#1e293b" stroke="#94a3b8" stroke-width="2"/><path d="M40 8 L65 15 L18 15 Z" fill="#93c5fd" opacity="0.8"/><rect x="85" y="20" width="15" height="4" fill="#fbbf24"/></svg>`,
+            car3: `<svg width="60" height="30" viewBox="0 0 100 40"><rect x="10" y="15" width="85" height="15" rx="3" fill="#22c55e" stroke="#14532d" stroke-width="2"/><path d="M20 15 L30 5 L60 5 L70 15 Z" fill="#22c55e" stroke="#14532d" stroke-width="2"/><circle cx="25" cy="30" r="8" fill="#1e293b" stroke="#94a3b8" stroke-width="2"/><circle cx="75" cy="30" r="8" fill="#1e293b" stroke="#94a3b8" stroke-width="2"/><path d="M33 7 L57 7 L65 15 L25 15 Z" fill="#93c5fd" opacity="0.8"/></svg>`
+        };
+
+        const BOT_NAMES = ["RacerX", "SpeedyG", "TurboTom", "NitroNinja", "KeyboardKing", "TypingTornado", "FlashFingers", "QwertyQueen", "ShiftMaster"];
+        
+        const TEXT_SAMPLES = [
+            "Balapan mobil bukanlah tentang siapa yang paling cepat menginjak pedal gas, melainkan tentang siapa yang paling tenang mengendalikan kemudi di tikungan tajam.",
+            "Kecepatan mengetik yang sesungguhnya berasal dari memori otot dan konsentrasi tinggi. Jangan melihat ke keyboard, biarkan jari-jarimu yang mengingat posisinya secara otomatis.",
+            "Dalam dunia pemrograman, sebuah kode yang bersih jauh lebih berharga daripada kode yang cerdas tetapi tidak dapat dibaca oleh orang lain di masa depan.",
+            "Setiap huruf yang kamu ketik dengan benar adalah satu langkah lebih dekat ke garis finis. Tetap fokus, jaga ritme, dan jangan panik ketika membuat kesalahan.",
+            "Jalan raya yang panjang selalu dimulai dari putaran roda pertama. Pembalap terbaik bukan yang tidak pernah salah, tetapi yang paling cepat bangkit dan kembali melaju.",
+            "Teknologi berkembang sangat cepat, tetapi kebiasaan belajar yang konsisten tetap menjadi kunci untuk menguasai keterampilan baru dalam waktu singkat.",
+            "Ketelitian dan kecepatan harus berjalan beriringan. Mengetik cepat tanpa akurasi hanya akan membuatmu menghabiskan waktu untuk memperbaiki kesalahan."
+        ];
+
+        // Pilih teks acak yang berbeda dari teks balapan sebelumnya
+        function pickText() {
+            const pool = TEXT_SAMPLES.filter(txt => txt !== currentText);
+            return pool[Math.floor(Math.random() * pool.length)];
+        }
+
+        // Teks balapan dari AI (Supabase Edge Function). Jika gagal/lambat, pakai teks bawaan.
+        const TEXT_FUNCTION = 'generate-text';
+        async function generateRaceText() {
+            if(!initSupabaseConnection(true)) return pickText();
+            setConnectionStatus('Membuat teks balapan dengan AI...');
+            try {
+                const { data, error } = await Promise.race([
+                    supabaseClient.functions.invoke(TEXT_FUNCTION, { body: {} }),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
+                ]);
+                const text = data && typeof data.text === 'string' ? data.text.trim() : '';
+                if(error || text.length < 40 || text.length > 400) throw error || new Error('Teks tidak valid');
+                setConnectionStatus('Terhubung ke Supabase', 'ok');
+                return text;
+            } catch(err) {
+                console.warn('Teks AI gagal, memakai teks bawaan:', err);
+                setConnectionStatus('Teks AI tidak tersedia, memakai teks bawaan.', 'ok');
+                return pickText();
+            }
+        }
+
+        let selectedCarId = 'car2';
+        let totalPlayersConfig = 5;
+        let gameMode = 'single';
+        let currentRoomId = null;
+        let isHost = false;
+        let isSpectator = false;
+        let myPlayerId = 'player_' + Math.random().toString(36).substring(2, 9);
+        
+        let isRacing = false;
+
+        let currentText = '', targetChars = [], currentIndex = 0, errors = 0, startTime = 0;
+        let racers = [], raceLoopId = null, syncTimer = null, supabaseChannel = null, supabaseClientUrl = '';
+
+        function setConnectionStatus(text, state) {
+            document.getElementById('connection-status').innerText = text;
+            const colors = { ok: 'bg-emerald-400', error: 'bg-red-500' };
+            document.getElementById('connection-dot').className = 'w-2 h-2 rounded-full ' + (colors[state] || 'bg-slate-500');
+        }
+
+        function initSupabaseConnection(silent = false) {
+            const url = document.getElementById('supabase-url-input').value.trim();
+            if(!url || !window.supabase) {
+                setConnectionStatus('Supabase belum siap. Periksa URL dan koneksi internet.', 'error');
+                if(!silent) alert("Supabase belum siap. Periksa URL dan koneksi internet.");
+                return false;
+            }
+            if(!supabaseClient || supabaseClientUrl !== url) {
+                try {
+                    supabaseClient = window.supabase.createClient(url, SUPABASE_ANON_KEY);
+                    supabaseClientUrl = url;
+                } catch(err) {
+                    console.error(err);
+                    setConnectionStatus('URL Supabase tidak valid.', 'error');
+                    if(!silent) alert("URL Supabase tidak valid.");
+                    return false;
+                }
+            }
+            setConnectionStatus('Terhubung ke Supabase', 'ok');
+            return true;
+        }
+
+        window.addEventListener('load', () => {
+            initSupabaseConnection(true);
+            document.getElementById('supabase-url-input').addEventListener('change', () => initSupabaseConnection(true));
+        });
+
+        window.getPlayerName = () => document.getElementById('player-name-input').value.trim() || 'Pembalap';
+
+        window.selectCar = (id, el) => {
+            selectedCarId = id;
+            document.querySelectorAll('.car-option').forEach(o => o.classList.remove('selected-car'));
+            el.classList.add('selected-car');
+        };
+
+        window.setPlayers = (n) => {
+            totalPlayersConfig = n;
+            const on = 'py-2 rounded font-bold border bg-slate-700 text-white border-slate-500';
+            const off = 'py-2 rounded font-bold border bg-slate-800 text-slate-400 border-slate-700';
+            document.getElementById('btn-5p').className = n === 5 ? on : off;
+            document.getElementById('btn-10p').className = n === 10 ? on : off;
+        };
+
+        window.showScreen = (name) => {
+            ['menu', 'lobby', 'race', 'result'].forEach(s => {
+                const el = document.getElementById(`${s}-screen`);
+                el.classList.add('hidden');
+                el.classList.remove('flex');
+            });
+            const target = document.getElementById(`${name}-screen`);
+            target.classList.remove('hidden');
+            if(name !== 'menu') target.classList.add('flex');
+        };
+
+        window.createRoom = async () => {
+            if(!initSupabaseConnection()) return;
+            
+            const code = Math.random().toString(36).substring(2, 7).toUpperCase();
+            currentRoomId = code;
+            isHost = true;
+            isSpectator = false;
+            gameMode = 'multi';
+            const sampleText = await generateRaceText();
+
+            try {
+                const { error: roomErr } = await supabaseClient
+                    .from('multiplayer_rooms')
+                    .insert([{ code, host_id: myPlayerId, status: 'waiting', text: sampleText, created_at: Date.now() }]);
+
+                if(roomErr) {
+                    console.error("Room Insert Error:", roomErr);
+                    alert("Gagal membuat ruangan di Supabase. Periksa RLS / policy tabel.");
+                    return;
+                }
+
+                await joinRoomCore(code, true, false);
+            } catch (err) {
+                console.error(err);
+                alert("Terjadi kesalahan jaringan ke Supabase.");
+            }
+        }
+
+        window.joinRoom = async (modeType = 'racer') => {
+            if(!initSupabaseConnection()) return;
+            const codeInput = document.getElementById('join-room-code').value.trim().toUpperCase();
+            if(codeInput.length < 3) {
+                alert("Masukkan kode ruang yang valid!");
+                return;
+            }
+
+            try {
+                const { data: roomData, error } = await supabaseClient
+                    .from('multiplayer_rooms')
+                    .select('*')
+                    .eq('code', codeInput)
+                    .single();
+
+                if(error || !roomData) {
+                    alert("Ruangan tidak ditemukan! Periksa kembali kode ruangan.");
+                    return;
+                }
+
+                if(roomData.status !== 'waiting') {
+                    alert("Balapan di ruangan ini sudah dimulai!");
+                    return;
+                }
+
+                currentRoomId = codeInput;
+                isHost = false;
+                isSpectator = (modeType === 'spectator');
+                gameMode = 'multi';
+
+                await joinRoomCore(codeInput, false, isSpectator);
+            } catch (err) {
+                console.error(err);
+                alert("Gagal bergabung ke ruangan.");
+            }
+        }
+
+        async function joinRoomCore(code, isHostJoined, spectatorMode) {
+            const playerName = window.getPlayerName() + (spectatorMode ? ' (Penonton)' : '');
+            const { error } = await supabaseClient
+                .from('multiplayer_room_players')
+                .upsert([{
+                    id: myPlayerId,
+                    room_code: code,
+                    name: playerName,
+                    car_id: spectatorMode ? 'spectator' : selectedCarId,
+                    progress: 0,
+                    wpm: spectatorMode ? -1 : 0,
+                    finished_at: null,
+                    joined_at: Date.now()
+                }]);
+
+            if(error) {
+                console.error("Player Insert Error:", error);
+                alert("Gagal mendaftarkan ke dalam ruangan.");
+                return;
+            }
+
+            document.getElementById('lobby-room-code').innerText = code;
+            if(isHostJoined) {
+                document.getElementById('btn-start-multiplayer').classList.remove('hidden');
+                document.getElementById('wait-host-msg').classList.add('hidden');
+            } else {
+                document.getElementById('btn-start-multiplayer').classList.add('hidden');
+                document.getElementById('wait-host-msg').classList.remove('hidden');
+            }
+
+            window.showScreen('lobby');
+            subscribeRoomChannel(code);
+            fetchRoomPlayers(code);
+        }
+
+        window.copyRoomCode = () => {
+            const code = document.getElementById('lobby-room-code').innerText;
+            navigator.clipboard.writeText(code);
+            alert("Kode ruangan disalin: " + code);
+        }
+
+        window.leaveLobby = async () => {
+            if(supabaseChannel) {
+                supabaseClient.removeChannel(supabaseChannel);
+                supabaseChannel = null;
+            }
+
+            if(currentRoomId && myPlayerId) {
+                await supabaseClient
+                    .from('multiplayer_room_players')
+                    .delete()
+                    .eq('id', myPlayerId);
+            }
+
+            currentRoomId = null;
+            isHost = false;
+            window.showScreen('menu');
+        }
+
+        async function fetchRoomPlayers(code) {
+            const { data, error } = await supabaseClient
+                .from('multiplayer_room_players')
+                .select('*')
+                .eq('room_code', code)
+                .order('joined_at', { ascending: true });
+
+            if(!error && data) {
+                renderLobbyPlayers(data);
+            }
+        }
+
+        function renderLobbyPlayers(playersList) {
+            document.getElementById('lobby-player-count').innerText = playersList.length;
+            const listEl = document.getElementById('lobby-player-list');
+            listEl.innerHTML = '';
+            playersList.forEach(r => {
+                const isSpec = r.wpm === -1;
+                const li = document.createElement('li');
+                li.className = "flex items-center gap-3 p-2 bg-slate-700/50 rounded-lg";
+                li.innerHTML = `
+                    <div class="w-8 h-4">${isSpec ? '👀' : (CAR_SVGS[r.car_id] || CAR_SVGS.car1)}</div>
+                    <span class="text-white font-bold">${r.name} ${r.id === myPlayerId ? '(Kamu)' : ''}</span>
+                    <span class="ml-auto text-xs px-2 py-0.5 rounded ${isSpec ? 'bg-amber-900 text-amber-300' : 'bg-blue-900 text-blue-300'}">${isSpec ? 'Penonton' : 'Pembalap'}</span>
+                `;
+                listEl.appendChild(li);
+            });
+        }
+
+        function subscribeRoomChannel(code) {
+            if(supabaseChannel) supabaseClient.removeChannel(supabaseChannel);
+
+            supabaseChannel = supabaseClient.channel(`room_${code}`)
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'multiplayer_room_players', filter: `room_code=eq.${code}` }, () => {
+                    fetchRoomPlayers(code);
+                })
+                .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'multiplayer_rooms', filter: `code=eq.${code}` }, (payload) => {
+                    if(payload.new.status === 'racing' && !isRacing) {
+                        currentText = payload.new.text;
+                        startMultiplayerGameClient();
+                    }
+                })
+                .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'multiplayer_room_players', filter: `room_code=eq.${code}` }, (payload) => {
+                    const u = payload.new;
+                    if(u.id === myPlayerId) return;
+                    const target = racers.find(r => r.id === u.id);
+                    if(target) { target.progress = u.progress; target.wpm = u.wpm; target.finished_at = u.finished_at; }
+                })
+                .subscribe();
+        }
+
+        window.startMultiplayerRace = async () => {
+            if(!isHost || !currentRoomId) return;
+            await supabaseClient
+                .from('multiplayer_rooms')
+                .update({ status: 'racing' })
+                .eq('code', currentRoomId);
+        }
+
+        window.playAgain = async () => {
+            if(gameMode !== 'multi' || !currentRoomId) {
+                window.startSinglePlayer();
+                return;
+            }
+            try {
+                if(isHost) {
+                    await supabaseClient.from('multiplayer_room_players')
+                        .update({ progress: 0, wpm: 0, finished_at: null })
+                        .eq('room_code', currentRoomId)
+                        .neq('wpm', -1);
+                    await supabaseClient.from('multiplayer_rooms')
+                        .update({ status: 'waiting', text: await generateRaceText() })
+                        .eq('code', currentRoomId);
+                }
+                document.getElementById('btn-start-multiplayer').classList.toggle('hidden', !isHost);
+                document.getElementById('wait-host-msg').classList.toggle('hidden', isHost);
+                window.showScreen('lobby');
+                fetchRoomPlayers(currentRoomId);
+            } catch(err) {
+                console.error(err);
+                alert("Gagal menyiapkan balapan baru.");
+            }
+        }
+
+        let preparingRace = false;
+        window.startSinglePlayer = async () => {
+            if(preparingRace) return;
+            preparingRace = true;
+            gameMode = 'single';
+            isSpectator = false;
+            currentRoomId = null;
+            isHost = false;
+            currentText = await generateRaceText();
+            preparingRace = false;
+            
+            racers = [];
+            racers.push({
+                id: myPlayerId,
+                name: window.getPlayerName(),
+                type: 'player',
+                progress: 0,
+                wpm: 0,
+                finished_at: null,
+                svg: CAR_SVGS[selectedCarId]
+            });
+
+            let shuffledBots = [...BOT_NAMES].sort(() => 0.5 - Math.random());
+            for(let i = 1; i < totalPlayersConfig; i++) {
+                const carKeys = Object.keys(CAR_SVGS);
+                const randomCar = carKeys[Math.floor(Math.random() * carKeys.length)];
+                racers.push({
+                    id: `bot-${i}`,
+                    name: shuffledBots[i-1],
+                    type: 'bot',
+                    progress: 0,
+                    wpm: 0,
+                    targetWpm: Math.floor(Math.random() * 50) + 25,
+                    finished_at: null,
+                    svg: CAR_SVGS[randomCar]
+                });
+            }
+
+            setupRaceUI(racers.length);
+            startCountdown();
+        }
+
+        async function startMultiplayerGameClient() {
+            const { data } = await supabaseClient
+                .from('multiplayer_room_players')
+                .select('*')
+                .eq('room_code', currentRoomId);
+
+            racers = [];
+            if(data) {
+                data.forEach(p => {
+                    if(p.wpm !== -1) {
+                        racers.push({
+                            id: p.id,
+                            name: p.name,
+                            type: p.id === myPlayerId ? 'player' : 'online',
+                            progress: p.progress || 0,
+                            wpm: p.wpm || 0,
+                            finished_at: p.finished_at || null,
+                            svg: CAR_SVGS[p.car_id] || CAR_SVGS.car1
+                        });
+                    }
+                });
+            }
+
+            setupRaceUI(racers.length);
+            startCountdown();
+        }
+
+        function setupRaceUI(totalRacersCount) {
+            window.showScreen('race');
+            document.getElementById('total-racers').innerText = totalRacersCount;
+            
+            targetChars = currentText.split('');
+            currentIndex = 0;
+            errors = 0;
+
+            const textDisplay = document.getElementById('text-display');
+            const bottomPanel = document.getElementById('bottom-control-panel');
+            
+            if (isSpectator) {
+                document.getElementById('wpm-stat-box').style.display = 'none';
+                document.getElementById('acc-stat-box').style.display = 'none';
+                textDisplay.innerHTML = `<div class="text-center text-amber-400 font-bold text-xl py-2">👀 Anda sedang dalam Mode Penonton. Menyaksikan para pembalap beradu cepat!</div>`;
+                document.getElementById('countdown-overlay').style.display = 'none';
+            } else {
+                document.getElementById('countdown-overlay').style.display = '';
+                document.getElementById('wpm-stat-box').style.display = '';
+                document.getElementById('acc-stat-box').style.display = '';
+                textDisplay.innerHTML = targetChars.map((char, i) => 
+                    `<span class="char ${i === 0 ? 'active' : ''}" id="char-${i}">${char === ' ' ? '&nbsp;' : char}</span>`
+                ).join('');
+            }
+
+            const trackContainer = document.getElementById('track-container');
+            trackContainer.innerHTML = '';
+            const rowHeight = totalRacersCount > 5 ? 'h-9' : 'h-12';
+
+            racers.forEach((racer) => {
+                const isMe = racer.type === 'player' && !isSpectator;
+
+                const row = document.createElement('div');
+                row.className = 'flex items-center gap-3';
+
+                const label = document.createElement('div');
+                label.className = `w-24 sm:w-32 flex-shrink-0 truncate text-xs sm:text-sm font-bold ${isMe ? 'text-amber-400' : 'text-slate-400'}`;
+                label.innerText = racer.name;
+                label.title = racer.name;
+
+                const lane = document.createElement('div');
+                lane.className = `track-lane flex-1 ${rowHeight} relative overflow-hidden`;
+                if(isMe) {
+                    lane.style.backgroundColor = 'rgba(59, 130, 246, 0.1)';
+                    lane.style.borderLeft = '4px solid #3b82f6';
+                }
+
+                const finishLine = document.createElement('div');
+                finishLine.className = 'finish-line';
+                lane.appendChild(finishLine);
+
+                const carDiv = document.createElement('div');
+                carDiv.className = 'car-container';
+                carDiv.id = `car-el-${racer.id}`;
+                carDiv.innerHTML = racer.svg;
+                lane.appendChild(carDiv);
+
+                row.append(label, lane);
+                trackContainer.appendChild(row);
+                racer.uiElement = carDiv;
+            });
+
+            updateStatsUI();
+        }
+
+        function startCountdown() {
+            isRacing = false;
+            document.removeEventListener('keydown', handleTyping);
+            
+            const overlay = document.getElementById('countdown-overlay');
+            const numEl = document.getElementById('countdown-number');
+            if(isSpectator) {
+                overlay.classList.add('hidden');
+                beginRace();
+                return;
+            }
+
+            overlay.classList.remove('hidden');
+            let count = 3;
+            numEl.innerText = count;
+
+            const interval = setInterval(() => {
+                count--;
+                if(count > 0) {
+                    numEl.innerText = count;
+                } else {
+                    clearInterval(interval);
+                    numEl.innerText = "GO!";
+                    setTimeout(() => {
+                        overlay.classList.add('hidden');
+                        beginRace();
+                    }, 500);
+                }
+            }, 1000);
+        }
+
+        let lastFrameTime = 0;
+
+        function beginRace() {
+            isRacing = true;
+            startTime = performance.now();
+            lastFrameTime = startTime;
+            
+            if(!isSpectator) {
+                document.getElementById('text-display').focus();
+                document.addEventListener('keydown', handleTyping);
+            }
+
+            if(gameMode === 'multi') {
+                syncTimer = setInterval(async () => {
+                    if(!isRacing) return;
+                    if(!isSpectator) {
+                        const me = racers.find(r => r.type === 'player');
+                        if(me && currentRoomId) {
+                            await supabaseClient
+                                .from('multiplayer_room_players')
+                                .update({ progress: me.progress, wpm: me.wpm, finished_at: me.finished_at })
+                                .eq('id', myPlayerId);
+                        }
+                    }
+                }, 1000);
+
+            }
+
+            raceLoopId = requestAnimationFrame(raceLoop);
+        }
+
+        function raceLoop(time) {
+            if(!isRacing) return;
+
+            const dt = (time - lastFrameTime) / 1000;
+            lastFrameTime = time;
+            const elapsedTimeInMinutes = (time - startTime) / 60000;
+            const targetLength = targetChars.length;
+            let allFinished = true;
+
+            racers.forEach(racer => {
+                if(!racer.finished_at) {
+                    allFinished = false;
+
+                    if(racer.type === 'bot') {
+                        let currentSpeedWpm = racer.targetWpm + (Math.random() * 10 - 5);
+                        let charsPerSecond = (currentSpeedWpm * 5) / 60;
+                        let progressDelta = (charsPerSecond / targetLength) * 100 * dt;
+                        racer.progress += progressDelta;
+                        racer.wpm = Math.round(currentSpeedWpm);
+
+                        if(racer.progress >= 100) {
+                            racer.progress = 100;
+                            racer.finished_at = Date.now();
+                        }
+                    } else if (racer.type === 'player' && !isSpectator) {
+                        if(elapsedTimeInMinutes > 0 && currentIndex > 0) {
+                            racer.wpm = Math.round((currentIndex / 5) / elapsedTimeInMinutes);
+                        }
+                    }
+                }
+
+                if(racer.uiElement) {
+                    racer.uiElement.style.left = `calc(${Math.min(100, Math.max(0, racer.progress))}% - ${Math.min(100, Math.max(0, racer.progress)) * 0.6}px)`;
+                }
+            });
+
+            if(!isSpectator) {
+                const playerRacer = racers.find(r => r.type === 'player');
+                if(playerRacer) {
+                    document.getElementById('player-wpm').innerText = playerRacer.wpm;
+                }
+                let currentRankings = [...racers].sort((a, b) => {
+                    if(a.finished_at && b.finished_at) return a.finished_at - b.finished_at;
+                    if(a.finished_at) return -1;
+                    if(b.finished_at) return 1;
+                    return b.progress - a.progress;
+                });
+                const playerRank = currentRankings.findIndex(r => r.type === 'player') + 1;
+                document.getElementById('player-position').innerText = playerRank;
+            } else {
+                document.getElementById('player-position').innerText = '-';
+            }
+
+            if(allFinished || (!isSpectator && racers.find(r => r.type === 'player')?.finished_at)) {
+                isRacing = false;
+                setTimeout(showResults, 1000);
+            } else {
+                raceLoopId = requestAnimationFrame(raceLoop);
+            }
+        }
+
+        function handleTyping(e) {
+            if(!isRacing) return;
+
+            if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Tab'].includes(e.key)) return;
+            if (e.key === ' ' || e.key === "'") e.preventDefault();
+            if (e.key === 'Backspace') return;
+
+            const expectedChar = targetChars[currentIndex];
+            const currentCharEl = document.getElementById(`char-${currentIndex}`);
+            
+            if (e.key === expectedChar) {
+                currentCharEl.classList.remove('active', 'incorrect');
+                currentCharEl.classList.add('correct');
+                
+                currentIndex++;
+                const playerRacer = racers.find(r => r.type === 'player');
+                playerRacer.progress = (currentIndex / targetChars.length) * 100;
+
+                if (currentIndex < targetChars.length) {
+                    document.getElementById(`char-${currentIndex}`).classList.add('active');
+                } else {
+                    playerRacer.progress = 100;
+                    playerRacer.finished_at = Date.now();
+                    if(gameMode === 'multi' && currentRoomId) {
+                        supabaseClient
+                            .from('multiplayer_room_players')
+                            .update({ progress: 100, wpm: playerRacer.wpm, finished_at: playerRacer.finished_at })
+                            .eq('id', myPlayerId);
+                    }
+                }
+                updateStatsUI();
+            } else {
+                errors++;
+                currentCharEl.classList.add('incorrect');
+                updateStatsUI();
+            }
+        }
+
+        function updateStatsUI() {
+            let acc = 100;
+            if (currentIndex + errors > 0) {
+                acc = Math.round((currentIndex / (currentIndex + errors)) * 100);
+            }
+            document.getElementById('player-accuracy').innerText = `${acc}%`;
+        }
+
+        window.quitGame = () => {
+            isRacing = false;
+            cancelAnimationFrame(raceLoopId);
+            clearInterval(syncTimer);
+            document.removeEventListener('keydown', handleTyping);
+            if(gameMode === 'multi') {
+                window.leaveLobby();
+            } else {
+                window.showScreen('menu');
+            }
+        }
+
+        function showResults() {
+            document.removeEventListener('keydown', handleTyping);
+            clearInterval(syncTimer);
+            window.showScreen('result');
+
+            const player = isSpectator ? null : racers.find(r => r.type === 'player');
+            let finalStandings = [...racers].sort((a, b) => {
+                if(a.finished_at && b.finished_at) return a.finished_at - b.finished_at;
+                if(a.finished_at) return -1;
+                if(b.finished_at) return 1;
+                return b.progress - a.progress;
+            });
+
+            const playerRank = isSpectator ? -1 : finalStandings.findIndex(r => r.type === 'player') + 1;
+            const titleEl = document.getElementById('result-title');
+            const trophyEl = document.getElementById('trophy-icon');
+            
+            if(isSpectator) {
+                titleEl.innerText = "BALAPAN SELESAI (PENONTON)";
+                trophyEl.innerText = "👀";
+                document.getElementById('final-wpm').innerText = "-";
+                document.getElementById('final-acc').innerText = "N/A";
+            } else if(playerRank === 1) {
+                titleEl.innerText = "JUARA 1!";
+                trophyEl.innerText = "🏆";
+            } else if (playerRank <= 3) {
+                titleEl.innerText = `PODIUM: KE-${playerRank}`;
+                trophyEl.innerText = "🥈";
+            } else {
+                titleEl.innerText = `SELESAI (KE-${playerRank})`;
+                trophyEl.innerText = "🏁";
+            }
+
+            if(player && !isSpectator) {
+                document.getElementById('final-wpm').innerText = player.wpm;
+                document.getElementById('final-acc').innerText = document.getElementById('player-accuracy').innerText;
+            }
+
+            const lbList = document.getElementById('leaderboard-list');
+            lbList.innerHTML = '';
+            
+            finalStandings.forEach((r, idx) => {
+                const li = document.createElement('li');
+                const isMe = r.type === 'player' && !isSpectator;
+                li.className = `flex justify-between items-center p-3 rounded-lg ${isMe ? 'bg-blue-900/40 border border-blue-500/50' : 'bg-slate-700/30'}`;
+                let statusText = r.finished_at ? `${r.wpm} WPM` : `${Math.round(r.progress)}%`;
+
+                li.innerHTML = `
+                    <div class="flex items-center gap-3">
+                        <span class="font-bold w-6 text-slate-400">${idx + 1}.</span>
+                        <span class="${isMe ? 'font-bold text-white' : 'text-slate-300'}">${r.name} ${isMe ? '(Kamu)' : ''}</span>
+                    </div>
+                    <div class="font-mono ${isMe ? 'text-emerald-400 font-bold' : 'text-slate-400'}">${statusText}</div>
+                `;
+                lbList.appendChild(li);
+            });
+        }
+    </script>
+</body>
+</html>
